@@ -1,1 +1,1 @@
-struct OutageStatus <: PSI.InitialConditionType end
+struct InitialOutageStatus <: PSI.InitialConditionType end

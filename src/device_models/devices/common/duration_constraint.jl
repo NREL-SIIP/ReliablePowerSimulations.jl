@@ -29,16 +29,17 @@ function device_duration_look_ahead_outage!(
                 JuMP.GenericAffExpr{Float64, PSI._variable_type(optimization_container)}(0)
             for i in (t - cont.duration_data.up + 1):t
                 if i in time_steps
+                    i = Int64(i)
                     JuMP.add_to_expression!(expr_up, varon[name, i])
                 end
             end
             if t <= cont.duration_data.up
-                expr_up += cont.initial_duration[1].value
+                expr_up += first(cont.initial_duration).value
             end
             con_up[name, t] = JuMP.@constraint(
                 optimization_container.JuMPmodel,
-                varstop[name, t] * cont.duration_data.up - expr_up <=
-                cont.timeseries[t] * cont.duration_data.up
+                varstop[name, t] * cont.duration_data.up <=
+                expr_up + (1 - cont.timeseries[t]) * cont.duration_data.up
             )
 
             # Minimum Down-time Constraint
@@ -46,16 +47,22 @@ function device_duration_look_ahead_outage!(
                 JuMP.GenericAffExpr{Float64, PSI._variable_type(optimization_container)}(0)
             for i in (t - cont.duration_data.down + 1):t
                 if i in time_steps
+                    i = Int64(i)
                     JuMP.add_to_expression!(expr_dn, (1 - varon[name, i]))
                 end
             end
             if t <= cont.duration_data.down
-                expr_dn += cont.initial_duration[2].value
+                expr_dn += last(cont.initial_duration).value
+            end
+            if t == 1
+                expr_dn += (1 - cont.initial_outage.value) * cont.duration_data.down
+            else
+                expr_dn += (1 - cont.timeseries[t - 1]) * cont.duration_data.down
             end
             con_down[name, t] = JuMP.@constraint(
                 optimization_container.JuMPmodel,
-                varstart[name, t] * cont.duration_data.down - expr_dn <=
-                cont.timeseries[t] * cont.duration_data.down
+                varstart[name, t] * cont.duration_data.down <=
+                expr_dn + (1 - cont.timeseries[t]) * cont.duration_data.down
             )
         end
     end
@@ -86,12 +93,7 @@ function device_duration_parameters_outage!(
     con_down =
         PSI.add_cons_container!(optimization_container, name_down, set_names, time_steps)
 
-    container_outage = PSI.add_param_container!(
-        optimization_container,
-        param_reference,
-        set_names,
-        time_steps,
-    )
+    container_outage = PSI.get_parameter_container(optimization_container, param_reference)
     param = PSI.get_parameter_array(container_outage)
     multiplier = PSI.get_multiplier_array(container_outage)
 
@@ -99,15 +101,12 @@ function device_duration_parameters_outage!(
         for cont in constraint_info
             name = PSI.get_component_name(cont)
 
-            param[name, t] =
-                PJ.add_parameter(optimization_container.JuMPmodel, cont.timeseries[t])
-            multiplier[name, t] = cont.multiplier
-
             # Minimum Up-time Constraint
             expr_up =
                 JuMP.GenericAffExpr{Float64, PSI._variable_type(optimization_container)}(0)
             for i in (t - cont.duration_data.up + 1):t
                 if i in time_steps
+                    i = Int64(i)
                     JuMP.add_to_expression!(expr_up, varon[name, i])
                 end
             end
@@ -117,8 +116,9 @@ function device_duration_parameters_outage!(
 
             con_up[name, t] = JuMP.@constraint(
                 optimization_container.JuMPmodel,
-                varstop[name, t] * cont.duration_data.up - expr_up <=
-                param[name, t] * cont.duration_data.up
+                varstop[name, t] * cont.duration_data.up <=
+                expr_up +
+                (1 * cont.duration_data.up - param[name, t] * cont.duration_data.up)
             )
 
             # Minimum Down-time Constraint
@@ -126,16 +126,26 @@ function device_duration_parameters_outage!(
                 JuMP.GenericAffExpr{Float64, PSI._variable_type(optimization_container)}(0)
             for i in (t - cont.duration_data.down + 1):t
                 if i in time_steps
+                    i = Int64(i)
                     JuMP.add_to_expression!(expr_dn, (1 - varon[name, i]))
                 end
             end
             if t <= cont.duration_data.down
                 expr_dn += cont.initial_duration[2].value
             end
+
+            if t == 1
+                expr_dn += (
+                    cont.duration_data.down -
+                    cont.initial_outage.value * cont.duration_data.down
+                )
+            else
+                expr_dn +=
+                    (cont.duration_data.down - param[name, t - 1] * cont.duration_data.down)
+            end
             con_down[name, t] = JuMP.@constraint(
                 optimization_container.JuMPmodel,
-                varstart[name, t] * cont.duration_data.down - expr_dn <=
-                param[name, t] * cont.duration_data.down
+                varstart[name, t] * cont.duration_data.down <= expr_dn
             )
         end
     end
